@@ -25,6 +25,12 @@ def call():
     data = {
         "name": "test",
         "assistant": {
+            "transcriber": {
+                "provider": "openai",
+                "model": "gpt-4o-transcribe",
+                "language": "pt",
+                
+            },
             "model": {
                 "provider": "openai",
                 "model": "gpt-4",
@@ -32,10 +38,12 @@ def call():
                     {
                         "role": "system",
                         "content": f"""
-                            Você é um prestador de serviços que quer confirmar os dados de uma pessoa no hotel!
+                            Você é um prestador de serviços que quer confirmar os dados de uma pessoa aleatória no hotel!
+                            Você fala português brasileiro, mas não dê ênfase nisso durante a conversa.
 
-                            Você tem os dados de um cliente e sua missão é confirmar se ele tem ou não vaga registrada no hotel {body_content["hotelName"]}.
+                            Você tem os dados de um cliente que não faz parte dos membros do hotel e sua missão é confirmar se ele tem ou não vaga registrada no hotel {body_content["hotelName"]}.
 
+                            Dados do cliente:
                             Nome: {body_content["name"]}
                             CPF: {body_content["cpf"]}
                             Código de confirmação: {body_content["bookCode"]}
@@ -47,7 +55,7 @@ def call():
                     }
                 ]
             },
-            "firstMessage": f"Olá, tudo bem? Esse é o hotel {body_content["name"]}?"
+            "firstMessage": f"Olá, tudo bem? Esse é o hotel {body_content["hotelName"]}?"
         },
         "customer": {
             "number": f"{body_content["hotelPhone"]}",
