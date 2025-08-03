@@ -1,22 +1,216 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.responses import JSONResponse
+from fastapi.websockets import WebSocketDisconnect
+from websockets.client import connect
 import uvicorn
 from twilio.rest import Client
 from dotenv import load_dotenv
+import json
 import os
+import base64
+import asyncio
+from datetime import datetime
+import logging
 
 load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+PHONE_NUMBER_FROM = os.getenv('PHONE_NUMBER_FROM')
+PHONE_NUMBER_TO = os.getenv('PHONE_NUMBER_TO')
+DOMAIN = os.getenv("DOMAIN")
 PORT = os.getenv("PORT")
+
+logging.basicConfig(filename='conversation.log', level=logging.INFO)
+conversation_history = []
 
 app = FastAPI()
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+VOICE = "alloy"
+SYSTEM_MESSAGE = (
+    "You are a helpful and bubbly AI assistant who loves to chat about "
+    "anything the user is interested in and is prepared to offer them facts. "
+    "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
+    "Always stay positive, but work in a joke when appropriate."
+)
+LOG_EVENT_TYPES = [
+    'error', 'response.content.done', 'rate_limits.updated', 'response.done',
+    'input_audio_buffer.committed', 'input_audio_buffer.speech_stopped',
+    'input_audio_buffer.speech_started', 'session.created'
+]
+
 
 @app.get("/", response_class=JSONResponse)
 async def index():
     return {"message": "OK"}
 
+@app.get("/conversation-history")
+async def get_conversation_history():
+    """Full chat content"""
+    return JSONResponse(conversation_history)
+
+async def log_conversation(role: str, content: str, audio_data: str):
+    """Add conversation logs"""
+    data = {
+        "timestamp": datetime.now().isoformat(),
+        "role": role,
+        "content": content,
+        "audio": audio_data
+    }
+    conversation_history.append(data)
+    logging.info(json.dumps(data))
+
+@app.websocket("/media-stream")
+async def media_stream(websocket: WebSocket):
+    await websocket.accept()
+    print("Attempting to connect to OpenAI...")
+    async with connect(
+        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
+        extra_headers= [
+            ("Authorization", f"Bearer {OPENAI_API_KEY}"),
+            ("OpenAI-Beta", "realtime=v1")
+        ],
+    ) as openai_ws:
+        print("Connected to OpenAI WebSocket")
+        await initialize_session(openai_ws)
+        stream_sid = None
+
+        async def receive_from_twilio():
+            """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
+            nonlocal stream_sid
+            try:
+                async for message in websocket.iter_text():
+                    data = json.loads(message)
+                    if data['event'] == 'media' and openai_ws.open:
+                        await log_conversation(
+                            role="user",
+                            content="[User Response]",
+                            audio_data=data['media']['payload']
+                        )
+                        audio_append = {
+                            "type": "input_audio_buffer.append",
+                            "audio": data['media']['payload']
+                        }
+                        await openai_ws.send(json.dumps(audio_append))
+                    elif data['event'] == 'start':
+                        stream_sid = data['start']['streamSid']
+                        print(f"Incoming stream has started {stream_sid}")
+            except WebSocketDisconnect:
+                print("Client disconnected.")
+                if openai_ws.open:
+                    await openai_ws.close()
+
+        async def send_to_twilio():
+            """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
+            nonlocal stream_sid
+            try:
+                async for openai_message in openai_ws:
+                    response = json.loads(openai_message)
+                    if response['type'] == 'response.audio.delta' and response.get('delta'):
+                        try:
+                            audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
+                            await log_conversation(
+                                role="assistant",
+                                content="[AI Response]",
+                                audio_data=audio_payload
+                            )
+                            audio_delta = {
+                                "event": "media",
+                                "streamSid": stream_sid,
+                                "media": {
+                                    "payload": audio_payload
+                                }
+                            }
+                            await websocket.send_json(audio_delta)
+                        except Exception as e:
+                            print(f"Error processing audio data: {e}")
+            except Exception as e:
+                print(f"Error in send_to_twilio: {e}")
+        await asyncio.gather(receive_from_twilio(), send_to_twilio())
+
+async def send_initial_conversation_item(openai_ws):
+    initial_conversation_item = {
+        "type": "conversation.item.create",
+        "item": {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": (
+                        "Greet the user with 'Hello there! I am an AI voice assistant powered by "
+                        "Twilio and the OpenAI Realtime API. You can ask me for facts, jokes, or "
+                        "anything you can imagine. How can I help you?'"
+                    )
+                }
+            ]
+        }
+    }
+    await openai_ws.send(json.dumps(initial_conversation_item))
+    await openai_ws.send(json.dumps({"type": "response.create"}))
+
+async def initialize_session(openai_ws):
+    """Control initial session with OpenAI."""
+    session_update = {
+        "type": "session.update",
+        "session": {
+            "turn_detection": {"type": "server_vad"},
+            "input_audio_format": "g711_ulaw",
+            "output_audio_format": "g711_ulaw",
+            "voice": VOICE,
+            "instructions": SYSTEM_MESSAGE,
+            "modalities": ["text", "audio"],
+            "temperature": 0.8,
+        }
+    }
+    print('Sending session update:', json.dumps(session_update))
+    await openai_ws.send(json.dumps(session_update))
+
+    await send_initial_conversation_item(openai_ws)
+
+async def check_number_allowed(to):
+    """Check if a number is allowed to be called."""
+    try:
+        incoming_numbers = client.incoming_phone_numbers.list(phone_number=to)
+        if incoming_numbers:
+            return True
+
+        outgoing_caller_ids = client.outgoing_caller_ids.list(phone_number=to)
+        if outgoing_caller_ids:
+            return True
+        return False
+    
+    except Exception as e:
+        print(f"Error checking phone number: {e}")
+        return False
+    
+async def make_call(phone_number_to_call: str):
+    """Make an outbound call."""
+    if not phone_number_to_call:
+        raise ValueError("Please provide a phone number to call.")
+
+    is_allowed = await check_number_allowed(phone_number_to_call)
+    if not is_allowed:
+        raise ValueError(f"The number {phone_number_to_call} is not recognized as a valid outgoing number or caller ID.")
+
+    outbound_twiml = (
+        f'<?xml version="1.0" encoding="UTF-8"?>'
+        f'<Response><Connect><Stream url="wss://{DOMAIN}/media-stream" /></Connect></Response>'
+    )
+
+    call = client.calls.create(
+        from_=PHONE_NUMBER_FROM,
+        to=phone_number_to_call,
+        twiml=outbound_twiml
+    )
+
+    await log_call_sid(call.sid)
+
+async def log_call_sid(call_sid):
+    print(f"Call started with SID: {call_sid}")
 
 if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(make_call(PHONE_NUMBER_TO))
     uvicorn.run("main:app", host="127.0.0.1", port=int(PORT), reload=True)
