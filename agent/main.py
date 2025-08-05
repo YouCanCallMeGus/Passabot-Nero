@@ -21,7 +21,7 @@ PHONE_NUMBER_TO = os.getenv('PHONE_NUMBER_TO')
 DOMAIN = os.getenv("DOMAIN")
 PORT = os.getenv("PORT")
 
-logging.basicConfig(filename='conversation.log', level=logging.INFO)
+logging.basicConfig(filename='agent/conversation.log', level=logging.INFO)
 conversation_history = []
 
 app = FastAPI()
@@ -29,17 +29,14 @@ client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 VOICE = "alloy"
 SYSTEM_MESSAGE = (
-    "You are a helpful and bubbly AI assistant who loves to chat about "
-    "anything the user is interested in and is prepared to offer them facts. "
-    "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
-    "Always stay positive, but work in a joke when appropriate."
+    "Você é um assistente e precisa confirmar a reserva de uma pessoa num hotel."
+    "Você está ligando para o hotel para confirmar dados! "
+    "Assim que o usuário tiver a primeira interação pergunte se é do hotel 'Hotel teste'"
+    "Após isso confirme os dados:"
+    "Sobre o código de reserva: Use o alfabeto alfanumérico para dizer, exemplo: 'a' = alpha, 'b' = beta ..."
+    "Você tem os dados do Bruno, cujo código de reserva é 1a345fs"
+    "Ao confirmar se os dados existem ou não encerre a ligação."
 )
-LOG_EVENT_TYPES = [
-    'error', 'response.content.done', 'rate_limits.updated', 'response.done',
-    'input_audio_buffer.committed', 'input_audio_buffer.speech_stopped',
-    'input_audio_buffer.speech_started', 'session.created'
-]
-
 
 @app.get("/", response_class=JSONResponse)
 async def index():
@@ -83,11 +80,6 @@ async def media_stream(websocket: WebSocket):
                 async for message in websocket.iter_text():
                     data = json.loads(message)
                     if data['event'] == 'media' and openai_ws.open:
-                        await log_conversation(
-                            role="user",
-                            content="[User Response]",
-                            audio_data=data['media']['payload']
-                        )
                         audio_append = {
                             "type": "input_audio_buffer.append",
                             "audio": data['media']['payload']
@@ -110,11 +102,6 @@ async def media_stream(websocket: WebSocket):
                     if response['type'] == 'response.audio.delta' and response.get('delta'):
                         try:
                             audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
-                            await log_conversation(
-                                role="assistant",
-                                content="[AI Response]",
-                                audio_data=audio_payload
-                            )
                             audio_delta = {
                                 "event": "media",
                                 "streamSid": stream_sid,
@@ -125,6 +112,14 @@ async def media_stream(websocket: WebSocket):
                             await websocket.send_json(audio_delta)
                         except Exception as e:
                             print(f"Error processing audio data: {e}")
+                    elif response['type'] == 'response.audio_transcript.done':
+                        await log_conversation(
+                            role="AI",
+                            content="[AI Response]",
+                            audio_data=response['transcript']
+                        )
+                    # elif response['type'] == 'conversation.item.created':
+                    #     print(response)
             except Exception as e:
                 print(f"Error in send_to_twilio: {e}")
         await asyncio.gather(receive_from_twilio(), send_to_twilio())
@@ -139,9 +134,7 @@ async def send_initial_conversation_item(openai_ws):
                 {
                     "type": "input_text",
                     "text": (
-                        "Greet the user with 'Hello there! I am an AI voice assistant powered by "
-                        "Twilio and the OpenAI Realtime API. You can ask me for facts, jokes, or "
-                        "anything you can imagine. How can I help you?'"
+                        "Diga 'Olá'"
                     )
                 }
             ]
@@ -152,10 +145,26 @@ async def send_initial_conversation_item(openai_ws):
 
 async def initialize_session(openai_ws):
     """Control initial session with OpenAI."""
+    transcription_update = {
+        "type": "transcription_session.update",
+        "input_audio_format": "g711_ulaw", 
+        "input_audio_transcription": {
+            "model": "gpt-4o-transcribe",  
+            "language": "pt",             
+            "prompt": ""                   
+        },
+        "turn_detection": {
+            "type": "server_vad",
+            "threshold": 0.5,
+        }
+    }
     session_update = {
         "type": "session.update",
         "session": {
-            "turn_detection": {"type": "server_vad"},
+            "turn_detection": {"type": "semantic_vad",
+                               "eagerness": "high", 
+                                "create_response": True, 
+                                "interrupt_response": True},
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
@@ -165,6 +174,7 @@ async def initialize_session(openai_ws):
         }
     }
     print('Sending session update:', json.dumps(session_update))
+    await openai_ws.send(json.dumps(transcription_update))
     await openai_ws.send(json.dumps(session_update))
 
     await send_initial_conversation_item(openai_ws)
