@@ -63,7 +63,7 @@ async def media_stream(websocket: WebSocket):
     await websocket.accept()
     print("Attempting to connect to OpenAI...")
     async with connect(
-        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
+        'wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview-2024-12-17',
         extra_headers= [
             ("Authorization", f"Bearer {OPENAI_API_KEY}"),
             ("OpenAI-Beta", "realtime=v1")
@@ -99,6 +99,8 @@ async def media_stream(websocket: WebSocket):
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
+                    print(response)
+                    # event: conversation.item.input_audio_transcription.completed
                     if response['type'] == 'response.audio.delta' and response.get('delta'):
                         try:
                             audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -148,11 +150,14 @@ async def initialize_session(openai_ws):
     transcription_update = {
         "type": "transcription_session.update",
         "input_audio_format": "g711_ulaw", 
-        "input_audio_transcription": {
-            "model": "gpt-4o-transcribe",  
-            "language": "pt",             
-            "prompt": ""                   
-        },
+        # "input_audio_transcription": {
+        #     "model": "gpt-4o-transcribe",  
+        #     "language": "pt",             
+        #     "prompt": "make transcriptions in portuguese"                   
+        # },
+        # "include": [
+        #     "item.input_audio_transcription.logprobs"
+        # ],
         "turn_detection": {
             "type": "server_vad",
             "threshold": 0.5,
@@ -171,11 +176,19 @@ async def initialize_session(openai_ws):
             "instructions": SYSTEM_MESSAGE,
             "modalities": ["text", "audio"],
             "temperature": 0.8,
+            "input_audio_transcription": {
+                # "enable": True,
+                "language": "pt",
+                "model": "gpt-4o-transcribe",
+            }
         }
     }
     print('Sending session update:', json.dumps(session_update))
+    logging.info(f"Session update: {json.dumps(session_update)}")
     await openai_ws.send(json.dumps(transcription_update))
     await openai_ws.send(json.dumps(session_update))
+    print("Session initialized with OpenAI.")
+    logging.info("Session initialized with OpenAI.")
 
     await send_initial_conversation_item(openai_ws)
 
