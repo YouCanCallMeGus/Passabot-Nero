@@ -11,6 +11,7 @@ import base64
 import asyncio
 from datetime import datetime
 import logging
+from data_model import User_data
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -28,24 +29,7 @@ app = FastAPI()
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 VOICE = "alloy"
-SYSTEM_MESSAGE = (
-    "Você é um assistente e precisa confirmar a reserva de uma pessoa num hotel."
-    "Você está ligando para o hotel para confirmar dados! "
-    "Assim que o usuário tiver a primeira interação pergunte se é do hotel 'Hotel teste'"
-    "Após isso confirme os dados:"
-    "Sobre o código de reserva: Use o alfabeto alfanumérico para dizer, exemplo: 'a' = alpha, 'b' = beta ..."
-    "Você tem os dados do Bruno, cujo código de reserva é 1a345fs"
-    "Ao confirmar se os dados existem ou não encerre a ligação."
-)
-
-@app.get("/", response_class=JSONResponse)
-async def index():
-    return {"message": "OK"}
-
-@app.get("/conversation-history")
-async def get_conversation_history():
-    """Full chat content"""
-    return JSONResponse(conversation_history)
+system_message = ("")
 
 async def log_conversation(role: str, content: str, audio_data: str):
     """Add conversation logs"""
@@ -99,8 +83,6 @@ async def media_stream(websocket: WebSocket):
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
-                    print(response)
-                    # event: conversation.item.input_audio_transcription.completed
                     if response['type'] == 'response.audio.delta' and response.get('delta'):
                         try:
                             audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -120,8 +102,13 @@ async def media_stream(websocket: WebSocket):
                             content="[AI Response]",
                             audio_data=response['transcript']
                         )
-                    # elif response['type'] == 'conversation.item.created':
-                    #     print(response)
+                    elif response['type'] == 'conversation.item.input_audio_transcription.completed':
+                        await log_conversation(
+                            role="AI",
+                            content="[AI Response]",
+                            audio_data=response['transcript']
+                        )
+                        
             except Exception as e:
                 print(f"Error in send_to_twilio: {e}")
         await asyncio.gather(receive_from_twilio(), send_to_twilio())
@@ -150,14 +137,6 @@ async def initialize_session(openai_ws):
     transcription_update = {
         "type": "transcription_session.update",
         "input_audio_format": "g711_ulaw", 
-        # "input_audio_transcription": {
-        #     "model": "gpt-4o-transcribe",  
-        #     "language": "pt",             
-        #     "prompt": "make transcriptions in portuguese"                   
-        # },
-        # "include": [
-        #     "item.input_audio_transcription.logprobs"
-        # ],
         "turn_detection": {
             "type": "server_vad",
             "threshold": 0.5,
@@ -173,11 +152,10 @@ async def initialize_session(openai_ws):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": SYSTEM_MESSAGE,
+            "instructions": system_message,
             "modalities": ["text", "audio"],
             "temperature": 0.8,
             "input_audio_transcription": {
-                # "enable": True,
                 "language": "pt",
                 "model": "gpt-4o-transcribe",
             }
@@ -233,7 +211,39 @@ async def make_call(phone_number_to_call: str):
 async def log_call_sid(call_sid):
     print(f"Call started with SID: {call_sid}")
 
+def create_system_message(data: User_data):
+    print(data)
+    return (
+        "Você está ligando para o hotel para confirmar dados, a pessoa a qual você está ligando não é o cliente que precisa ser confirmado!"
+        "Você fala português brasileiro!"
+        "Após isso confirme os dados:"
+        f"Nome do hotel: {data.hotelName}"
+        f"Número do hotel: {data.hotelPhone}"
+        f"Nome do cliente: {data.name}"
+        f"CPF do cliente: {data.cpf}"
+        f"Código de reserva: {data.bookCode}"
+        f"CheckIn: {data.checkIn}"
+        f"CheckOut: {data.checkOut}"
+        "Assim que o usuário tiver a primeira interação confirme se é realmente o hotel que está nos dados"
+        "Sobre o código de reserva: Use *SEMPRE* o alfabeto alfanumérico para dizer, exemplo: 'a' = alpha, 'b' = beta ..."
+        "Ao confirmar se todos os dados existem ou não encerre a ligação."
+    ) if data != None else ""
+
+@app.get("/", response_class=JSONResponse)
+async def index():
+    return {"message": "OK"}
+
+@app.get("/conversation-history", response_class=JSONResponse)
+async def get_conversation_history():
+    """Full chat content"""
+    return JSONResponse(conversation_history)
+
+@app.post("/make_call", response_class=JSONResponse)
+async def make_call_api(item: User_data):
+    global system_message
+    system_message = create_system_message(item)
+    await make_call(PHONE_NUMBER_TO)
+    return {"message": item}
+
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(make_call(PHONE_NUMBER_TO))
     uvicorn.run("main:app", host="127.0.0.1", port=int(PORT), reload=True)
