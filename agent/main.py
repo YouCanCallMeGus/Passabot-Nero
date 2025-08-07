@@ -12,6 +12,9 @@ import asyncio
 from datetime import datetime
 import logging
 from data_model import User_data
+import io
+import wave
+import pyaudio
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -22,7 +25,7 @@ PHONE_NUMBER_TO = os.getenv('PHONE_NUMBER_TO')
 DOMAIN = os.getenv("DOMAIN")
 PORT = os.getenv("PORT")
 
-logging.basicConfig(filename='agent/conversation.log', level=logging.INFO)
+logging.basicConfig(filename='conversation.log', level=logging.INFO)
 conversation_history = []
 
 app = FastAPI()
@@ -30,6 +33,23 @@ client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 VOICE = "alloy"
 system_message = ("")
+
+with open("audio.wav", "r") as f:
+    audio = f.read()
+    with wave.open(io.BytesIO(audio), 'rb') as wf:
+        p = pyaudio.PyAudio()
+        stream = p.open(format=p.get_format_from_width(wf.getsampwidth()),
+                        channels=wf.getnchannels(),
+                        rate=wf.getframerate(),
+                        output=True)
+        data = wf.readframes(1024)
+        while data:
+            stream.write(data)
+            data = wf.readframes(1024)
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+ 
 
 async def log_conversation(role: str, content: str, audio_data: str):
     """Add conversation logs"""
@@ -90,7 +110,7 @@ async def media_stream(websocket: WebSocket):
                                 "event": "media",
                                 "streamSid": stream_sid,
                                 "media": {
-                                    "payload": audio_payload
+                                    "payload": audio
                                 }
                             }
                             await websocket.send_json(audio_delta)
@@ -215,7 +235,7 @@ def create_system_message(data: User_data):
     print(data)
     return (
         "Você está ligando para o hotel para confirmar dados, a pessoa a qual você está ligando não é o cliente que precisa ser confirmado!"
-        "Você fala português brasileiro!"
+        "Você fala português brasileiro! Não tenha sotaque de Portugal"
         "Após isso confirme os dados:"
         f"Nome do hotel: {data.hotelName}"
         f"Número do hotel: {data.hotelPhone}"
