@@ -1,11 +1,11 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
 import requests
 from dotenv import load_dotenv
 import os
 
-load_dotenv()
-VAPI_KEY = os.getenv("VAPI_API_KEY")
-PHONE_ID = os.getenv("PHONEID")
+load_dotenv(override=True)
+VAPI_API_KEY = os.getenv("VAPI_API_KEY")
+PHONE_ID = os.getenv("PHONE_ID")
 
 app = Flask(__name__)
 
@@ -19,7 +19,7 @@ def home():
 def call():
     body_content = request.get_json()
     headers = {
-        "Authorization": f"Bearer {VAPI_KEY}"
+        "Authorization": f"Bearer {VAPI_API_KEY}"
     }
 
     data = {
