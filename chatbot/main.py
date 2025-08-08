@@ -4,6 +4,8 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from pinecone import Pinecone
 from langchain_pinecone import PineconeVectorStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader
 from operator import itemgetter
 from dotenv import load_dotenv
 import os
@@ -37,7 +39,14 @@ def handle_index_creation(index_name: str):
         raise ValueError(f"Erro ao criar o índice: {e}")
 
 def create_context():
-    pass
+    loader = PyPDFLoader("FAQ.pdf")
+    faq_docs = loader.load()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=200)
+    faq_chunks = text_splitter.split_documents(faq_docs)
+    try:
+        vectorStore.add_documents(faq_chunks)
+    except Exception as e:
+        raise ValueError(e)
 
 def chat(query: str, chat_history):
     prompt = ChatPromptTemplate.from_messages([
