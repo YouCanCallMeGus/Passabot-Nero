@@ -1,19 +1,24 @@
+import asyncio
+import base64
+import json
+import logging
+import os
+from datetime import datetime
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.websockets import WebSocketDisconnect
-from websockets.client import connect
-import uvicorn
 from twilio.rest import Client
-from dotenv import load_dotenv
-import json
-import os
-import base64
-import asyncio
-from datetime import datetime
-import logging
-from data_model import User_data
+import uvicorn
+from websockets.client import connect
+
+from workflow.data_model import User_data
+from workflow.graph_path import next_node
+from workflow.system_message import create_system_message
 
 load_dotenv()
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
@@ -23,21 +28,26 @@ DOMAIN = os.getenv("DOMAIN")
 PORT = os.getenv("PORT")
 
 logging.basicConfig(filename='agent/conversation.log', level=logging.INFO)
-conversation_history = []
 
 app = FastAPI()
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 VOICE = "alloy"
-system_message = ("")
+conversation_history = []
+node = "C_1"
+path_history = ["C_1"]
+data = None
+system_message = None
 
 async def log_conversation(role: str, content: str, audio_data: str):
     """Add conversation logs"""
+    global node
     data = {
         "timestamp": datetime.now().isoformat(),
         "role": role,
         "content": content,
-        "audio": audio_data
+        "audio": audio_data,
+        "node": node,
     }
     conversation_history.append(data)
     logging.info(json.dumps(data))
@@ -79,10 +89,14 @@ async def media_stream(websocket: WebSocket):
 
         async def send_to_twilio():
             """Receive events from the OpenAI Realtime API, send audio back to Twilio."""
+            global node, conversation_history, system_message
             nonlocal stream_sid
             try:
                 async for openai_message in openai_ws:
                     response = json.loads(openai_message)
+                    if response["type"] == "error":
+                        continue
+                    print(response)
                     if response['type'] == 'response.audio.delta' and response.get('delta'):
                         try:
                             audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -102,18 +116,26 @@ async def media_stream(websocket: WebSocket):
                             content="[AI Response]",
                             audio_data=response['transcript']
                         )
+                        node = next_node(conversation_history, node)
+                        path_history.append(node)
+                        system_message = create_system_message(node, data)
+
                     elif response['type'] == 'conversation.item.input_audio_transcription.completed':
                         await log_conversation(
-                            role="AI",
-                            content="[AI Response]",
+                            role="User",
+                            content="[User Response]",
                             audio_data=response['transcript']
                         )
+                        node = next_node(conversation_history, node)
+                        path_history.append(node)
+                        system_message = create_system_message(node, data)
                         
             except Exception as e:
                 print(f"Error in send_to_twilio: {e}")
         await asyncio.gather(receive_from_twilio(), send_to_twilio())
 
 async def send_initial_conversation_item(openai_ws):
+    global data
     initial_conversation_item = {
         "type": "conversation.item.create",
         "item": {
@@ -123,7 +145,7 @@ async def send_initial_conversation_item(openai_ws):
                 {
                     "type": "input_text",
                     "text": (
-                        "Diga 'Olá'"
+                        f"Cumprimente com um 'Olá' educado e pergunte: 'Estou falando com o hotel {data.hotelName}?'"
                     )
                 }
             ]
@@ -185,7 +207,7 @@ async def check_number_allowed(to):
     except Exception as e:
         print(f"Error checking phone number: {e}")
         return False
-    
+
 async def make_call(phone_number_to_call: str):
     """Make an outbound call."""
     if not phone_number_to_call:
@@ -211,24 +233,6 @@ async def make_call(phone_number_to_call: str):
 async def log_call_sid(call_sid):
     print(f"Call started with SID: {call_sid}")
 
-def create_system_message(data: User_data):
-    print(data)
-    return (
-        "Você está ligando para o hotel para confirmar dados, a pessoa a qual você está ligando não é o cliente que precisa ser confirmado!"
-        "Você fala português brasileiro!"
-        "Após isso confirme os dados:"
-        f"Nome do hotel: {data.hotelName}"
-        f"Número do hotel: {data.hotelPhone}"
-        f"Nome do cliente: {data.name}"
-        f"CPF do cliente: {data.cpf}"
-        f"Código de reserva: {data.bookCode}"
-        f"CheckIn: {data.checkIn}"
-        f"CheckOut: {data.checkOut}"
-        "Assim que o usuário tiver a primeira interação confirme se é realmente o hotel que está nos dados"
-        "Sobre o código de reserva: Use *SEMPRE* o alfabeto alfanumérico para dizer, exemplo: 'a' = alpha, 'b' = beta ..."
-        "Ao confirmar se todos os dados existem ou não encerre a ligação."
-    ) if data != None else ""
-
 @app.get("/", response_class=JSONResponse)
 async def index():
     return {"message": "OK"}
@@ -240,10 +244,11 @@ async def get_conversation_history():
 
 @app.post("/make_call", response_class=JSONResponse)
 async def make_call_api(item: User_data):
-    global system_message
-    system_message = create_system_message(item)
+    global system_message, data
+    data = item
+    system_message = create_system_message("C_1", data)
     await make_call(PHONE_NUMBER_TO)
-    return {"message": item}
+    return {"message": data}
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=int(PORT), reload=True)
+    uvicorn.run("agent.main:app", host="127.0.0.1", port=int(PORT), reload=True)
