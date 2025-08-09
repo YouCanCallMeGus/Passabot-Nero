@@ -1,7 +1,6 @@
 from workflow.data_model import User_data
 
 def create_system_message(node: str, data: User_data):
-    print(node)
     system_message = f"""
     Você é um **prestador de serviços** responsável por **confirmar reservas de hóspedes em nome de terceiros**. Sua missão é entrar em contato com o hotel {data.hotelName} para verificar se existe uma reserva registrada para um cliente específico, cujos dados você possui. Você que está ligando para o hotel!
 

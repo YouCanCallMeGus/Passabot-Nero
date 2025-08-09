@@ -127,6 +127,7 @@ async def media_stream(websocket: WebSocket):
                             audio_data=response['transcript']
                         )
                         node = next_node(conversation_history, node)
+                        print(node)
                         path_history.append(node)
                         system_message = create_system_message(node, data)
                         

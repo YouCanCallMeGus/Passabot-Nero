@@ -39,12 +39,12 @@ def get_node_history(conversation_history, node):
     node_history = []
     for message in conversation_history:
         if message["node"] == node:
-            node_history.append(f"{message["role"]}: {message["content"]}\n")
+            node_history.append(f"{message["role"]}: {message["audio"]}\n")
     return node_history
 
 
 def next_node(conversation_history, node):
-
+    
     node_history = get_node_history(conversation_history, node)
 
     if node == "C_1":
@@ -74,10 +74,9 @@ def next_node(conversation_history, node):
                 }
         
         result = request_structured_output(system_prompt, json_schema, node_history)
-        print(result)
-        if result == "SIM":
+        if result == '"SIM"':
             return "C_2"
-        elif result == "NAO":
+        elif result == '"NAO"':
             return "E_3"
         else:
             return "C_1"
