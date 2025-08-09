@@ -120,7 +120,7 @@ async def media_stream(websocket: WebSocket):
                         if possible_node:
                             node = possible_node
                         path_history.append(node)
-                        system_message = create_system_message(node, data)
+                        system_message = create_system_message(conversation_history, node, data)
 
                     elif response['type'] == 'conversation.item.input_audio_transcription.completed':
                         await log_conversation(
@@ -128,10 +128,25 @@ async def media_stream(websocket: WebSocket):
                             content="[User Response]",
                             audio_data=response['transcript']
                         )
-                        node = next_node(conversation_history, node)
-                        print(node)
+                        possible_node = next_node(conversation_history, node) 
+                        if possible_node:
+                            node = possible_node
                         path_history.append(node)
-                        system_message = create_system_message(node, data)
+                        system_message = create_system_message(conversation_history, node, data)
+                
+                    if node in ("E_2", "E_4", "E_5"):
+                        try:
+                            calls = client.calls.list(status="in-progress")
+                            for call in calls:
+                                client.calls(call.sid).update(status="completed")
+                                print(f"Call {call.sid} ended.")
+
+                            await websocket.close()
+                            if openai_ws.open:
+                                await openai_ws.close()
+
+                        except Exception as e:
+                            print(f"Error ending call: {e}")
                         
             except Exception as e:
                 print(f"Error in send_to_twilio: {e}")
@@ -247,9 +262,9 @@ async def get_conversation_history():
 
 @app.post("/make_call", response_class=JSONResponse)
 async def make_call_api(item: User_data):
-    global system_message, data
+    global system_message, data, conversation_history
     data = item
-    system_message = create_system_message("C_1", data)
+    system_message = create_system_message(conversation_history, "C_1", data)
     await make_call(PHONE_NUMBER_TO)
     return {"message": data}
 

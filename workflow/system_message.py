@@ -1,6 +1,16 @@
 from workflow.data_model import User_data
 
-def create_system_message(node: str, data: User_data):
+def get_node_history(conversation_history, node):
+
+    node_history = str()
+    for message in conversation_history:
+        if message["node"] == node:
+            node_history += f"{message["role"]}: {message["audio"]}\n" + "\n"
+    return node_history
+
+def create_system_message(conversation_history, node: str, data: User_data):
+
+    node_history = get_node_history(conversation_history, node)
     system_message = f"""
     Você é um **prestador de serviços** responsável por **confirmar reservas de hóspedes em nome de terceiros**. Sua missão é entrar em contato com o hotel {data.hotelName} para verificar se existe uma reserva registrada para um cliente específico, cujos dados você possui. Você que está ligando para o hotel!
 
@@ -13,12 +23,13 @@ def create_system_message(node: str, data: User_data):
         Antes de iniciar a solicitação, verifique se está realmente falando com o hotel {data.hotelName}.
 
         Logo no início da conversa, pergunte de forma educada e direta algo como:
-        "Olá, por gentileza, estou falando com o hotel {data.hotelName}?"
+        "Estou falando com o hotel {data.hotelName}?"
 
         Não afirme que você é o hotel. Seu papel é o de um prestador de serviços externo que está entrando em contato para confirmar uma reserva.
-
-        Se a pessoa que atendeu quiser saber quem é o cliente, responda com gentileza que antes de continuar, você precisa confirmar se está mesmo falando com o hotel correto.
+        Antes de confirmar a reserva, confirme se está falando com o hotel correto!
         """
+        system_message += message
+        system_message += f"O seu histórico de conversa com o paciente é: \n {node_history}"
     elif node == "C_2":
         message = f"""
         Agora, você deve pedir ao atendente para confirmar a reserva do cliente {data.name}.
@@ -32,7 +43,15 @@ def create_system_message(node: str, data: User_data):
         Check-out: {data.checkOut}
 
         Sempre que for necessário soletrar letras, utilize palavras fonéticas claras para representar cada letra. Ao soletrar números, fale cada dígito separadamente e de forma pausada, em português brasileiro. Toda a comunicação deve ser feita exclusivamente em português do Brasil, com articulação clara e ritmo lento ao soletrar, garantindo que o atendente compreenda perfeitamente cada informação transmitida.
-        """
 
-    system_message += message
+        Não afirme que você é o hotel. Seu papel é o de um prestador de serviços externo que está entrando em contato para confirmar uma reserva.
+        Você deve fornecer os dados do hóspede para que um atendente confirme a reserva.
+
+        Após receber uma resposta, agradeça de forma cordial.
+        """
+        system_message += message
+        system_message += f"O seu histórico de conversa com o paciente é: \n {node_history}"
+    else:
+        system_message = ""
+
     return system_message

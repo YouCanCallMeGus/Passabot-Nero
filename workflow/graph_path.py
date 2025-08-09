@@ -29,7 +29,7 @@ def request_structured_output(system_prompt, json_schema, node_history):
     resp = requests.post(API_URL, headers=headers, json=json)
     resp.raise_for_status()
     data = resp.json()
-    result = data["choices"][0]["message"]["content"].split(":")[-1].split("}")[0].strip()
+    result = data["choices"][0]["message"]["content"].split(':')[-1].split('}')[0].strip().split('"')[1].strip()
 
     return result
 
@@ -53,6 +53,7 @@ def next_node(conversation_history, node):
         Você é um assistente de IA muito prestativo que vai analisar um diálogo e
         dizer se há a confirmação que o atendente realmente corresponde ao hotel
         que o usuário deseja falar. Deve responder em: SIM, NAO ou INCONCLUSIVO.
+        Caso não exista uma confirmação muito clara e evidente, retorne INCONCLUSIVO.
         """
 
         json_schema = {
@@ -74,9 +75,47 @@ def next_node(conversation_history, node):
                 }
         
         result = request_structured_output(system_prompt, json_schema, node_history)
-        if result == '"SIM"':
+        if result == "SIM":
             return "C_2"
-        elif result == '"NAO"':
+        elif result == "NAO":
             return "E_3"
         else:
             return "C_1"
+    
+    elif node == "C_2":
+
+        system_prompt = """
+        Você é um assistente de IA muito prestativo que vai analisar um diálogo e
+        dizer se há o atendente confirmou que a reserva do hóspede foi confirmada.
+        Deve responder em: SIM, NAO ou INCONCLUSIVO.
+        Caso não existe uma confirmação muito clara e evidente, retorne INCONCLUSIVO.
+        """
+
+        json_schema = {
+            "name": "classify_booking_confirmation",
+            "description": "Classifica se houve confirmação da reserva do hóspede.",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "result": {
+                        "type": "string",
+                        "description": "Classificação do histórico do chat entre SIM, NAO e INCONCLUSIVO",
+                        "enum": ["SIM", "NAO", "INCONCLUSIVO"]
+                    }
+                },
+                "required": ["result"],
+                "additionalProperties": False
+            }
+        }
+
+        result = request_structured_output(system_prompt, json_schema, node_history)
+        if result == "SIM":
+            return "E_4"
+        elif result == "NAO":
+            return "E_5"
+        else:
+            return "C_2"
+    
+    else:
+        return node
