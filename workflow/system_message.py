@@ -1,14 +1,12 @@
 from workflow.data_model import User_data
 
 def create_system_message(node: str, data: User_data):
-
-    system_message = [f"""
+    print(node)
+    system_message = f"""
     Você é um **prestador de serviços** responsável por **confirmar reservas de hóspedes em nome de terceiros**. Sua missão é entrar em contato com o hotel {data.hotelName} para verificar se existe uma reserva registrada para um cliente específico, cujos dados você possui. Você que está ligando para o hotel!
 
     Durante a conversa, mantenha um tom educado, profissional e objetivo. Não revele sua identidade completa nem relacione-se diretamente ao hotel ou ao hóspede — você é apenas um intermediário designado para a confirmação. Essa é a sua missão: confirmar a reserva.
-    """,
-    ""
-    ]
+    """
 
     if node == "C_1":
         message = f"""
@@ -36,5 +34,5 @@ def create_system_message(node: str, data: User_data):
         Sempre que for necessário soletrar letras, utilize palavras fonéticas claras para representar cada letra. Ao soletrar números, fale cada dígito separadamente e de forma pausada, em português brasileiro. Toda a comunicação deve ser feita exclusivamente em português do Brasil, com articulação clara e ritmo lento ao soletrar, garantindo que o atendente compreenda perfeitamente cada informação transmitida.
         """
 
-    system_message[1] = message
-    return tuple(system_message)
+    system_message += message
+    return system_message

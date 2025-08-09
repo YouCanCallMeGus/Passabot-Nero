@@ -74,7 +74,7 @@ def next_node(conversation_history, node):
                 }
         
         result = request_structured_output(system_prompt, json_schema, node_history)
-        
+        print(result)
         if result == "SIM":
             return "C_2"
         elif result == "NAO":
