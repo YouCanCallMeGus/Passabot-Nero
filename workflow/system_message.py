@@ -6,7 +6,8 @@ def create_system_message(node: str, data: User_data):
 
     Durante a conversa, mantenha um tom educado, profissional e objetivo. Não revele sua identidade completa nem relacione-se diretamente ao hotel ou ao hóspede — você é apenas um intermediário designado para a confirmação. Essa é a sua missão: confirmar a reserva.
     """
-
+    print(node)
+    message = ""
     if node == "C_1":
         message = f"""
         Antes de iniciar a solicitação, verifique se está realmente falando com o hotel {data.hotelName}.
